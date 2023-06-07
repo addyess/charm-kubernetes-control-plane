@@ -1,0 +1,8 @@
+name: Build Charm
+on:
+  workflow_dispatch:
+
+jobs:
+  charm-build:
+    uses: charmed-kubernetes/workflows/.github/workflows/charmtools-build.yaml@workflows/charm-builders
+    
