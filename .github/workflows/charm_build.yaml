@@ -1,8 +1,76 @@
-name: Build Charm
+name: Publish Charm
 on:
   workflow_dispatch:
+    inputs:
+      runs-on:
+        description: Description of the builder
+        default: ubuntu-20.04
+        type: string
+      charmtools-channel:
+        description: Snap channel for charm tools
+        default: 2.x/stable
+        type: string
+      charmcraft-channel:
+        description: Snap channel for charmcraft
+        default: latest/stable
+        type: string
+      release-channels:
+        description: List of release channels
+        required: false
+        type: string
+        default: '["latest/edge"]'
+      layer-index:
+        description: URL of the reactive layer index
+        default: https://charmed-kubernetes.github.io/layer-index/
+        type: string
 
 jobs:
   charm-build:
+    name: Build Kubernetes-control-plane for ${{ inputs.arch }}
     uses: charmed-kubernetes/workflows/.github/workflows/charmtools-build.yaml@workflows/charm-builders
-    
+    with:
+      runs-on: ${{ inputs.runs-on }}
+      charmtools-channel: ${{ inputs.charmtools-channel }}
+      layer-index: ${{ inputs.layer-index }}
+  resource-assemble:
+    name: Assemble Charm Resources
+    runs-on: ${{ inputs.runs-on }}
+    env:
+      ARTIFACT_PATH: /tmp/artifact/
+    outputs:
+      resource-artifact: ${{ steps.assemble.outputs.resource-artifact }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Assemble Resources
+        id: assemble
+        run: |
+          ./build-cni-resources.sh
+          mkdir -p $ARTIFACT_PATH
+          mv cni-*.tgz $ARTIFACT_PATH
+          echo "resource-artifact=$(yq '.name' metadata.yaml)-resources" >> "$GITHUB_OUTPUT"
+          echo '[{"resource": "cni-amd64", "filepath": "cni-amd64.tgz"},
+                 {"resource": "cni-arm64", "filepath": "cni-arm64.tgz"},
+                 {"resource": "cni-s390x", "filepath": "cni-s390x.tgz"},
+                 {"resource": "cdk-addons", "revision": 1},
+                 {"resource": "core", "revision": 1},
+                 {"resource": "kube-apiserver", "revision": 1},
+                 {"resource": "kube-controller-manager", "revision": 1},
+                 {"resource": "kube-proxy", "revision": 1},
+                 {"resource": "kube-scheduler", "revision": 1},
+                 {"resource": "kubectl", "revision": 1}]' > $ARTIFACT_PATH/charmcraft-upload.spec
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: ${{ steps.assemble.outputs.resource-artifact }}
+          path: ${{ env.ARTIFACT_PATH }}
+  charmcraft-upload:
+    needs: [charm-build, resource-assemble]
+    uses: charmed-kubernetes/workflows/.github/workflows/charmcraft-upload.yaml@workflows/charm-builders
+    with:
+      runs-on: ${{ inputs.runs-on }}
+      charmcraft-channel: ${{ inputs.charmcraft-channel }}
+      charm: ${{ needs.charm-build.outputs.charm }}
+      resources: ${{ needs.resource-assemble.outputs.resource-artifact }}
+      release-channels: ${{ inputs.release-channels }}
+    secrets:
+      CHARMCRAFT_AUTH: ${{ secrets.CHARMCRAFT_AUTH }}
