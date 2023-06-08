@@ -1,8 +1,39 @@
-name: Build Charm
+name: Publish Charm
 on:
   workflow_dispatch:
 
 jobs:
   charm-build:
     uses: charmed-kubernetes/workflows/.github/workflows/charmtools-build.yaml@workflows/charm-builders
-    
+  resource-build:
+    runs-on: ubuntu-20.04
+    outputs:
+      resources: ${{ steps.build.outputs.resources }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build CNI Resources
+        id: build
+        run: |
+          ./build-cni-resources.sh
+          resources=$(ls cni-*.tgz | jq -R -s -c 'split("\n")[:-1]')
+          echo resources=$resources >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v3
+        with:
+          name: cni-amd64
+          path: cni-amd64.tgz
+      - uses: actions/upload-artifact@v3
+        with:
+          name: cni-arm64
+          path: cni-arm64.tgz
+      - uses: actions/upload-artifact@v3
+        with:
+          name: cni-s390x
+          path: cni-s390x.tgz
+  charmcraft-upload:
+    needs: [charm-build, resource-build]
+    uses: charmed-kubernetes/workflows/.github/workflows/charmcraft-upload.yaml@workflows/charm-builders        
+    with:
+      charm: ${{ needs.charm-build.outputs.charm }}
+      resources: ${{ needs.resource-build.outputs.resources }}
+    secrets:
+      CHARMCRAFT_AUTH: ${{ secrets.CHARMCRAFT_AUTH }}
